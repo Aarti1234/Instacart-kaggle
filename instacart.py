@@ -1,14 +1,15 @@
 import numpy as np # linear algebra
 import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import pickle  # for file serialization
 
 # Input data files are available in the "../input/" directory.
 
 from subprocess import check_output
-print(check_output(["ls", "../input"]).decode("utf8"))
+print(check_output(["ls", "D:/kaggle instacart"]).decode("utf8"))
 
 # data loading
 import lightgbm as lgb
-path = '../input/'
+path = 'D:/kaggle instacart/'
 
 
 print('loading prior')
@@ -52,10 +53,88 @@ prods = pd.DataFrame()
 prods['orders'] = priors.groupby(priors.product_id).size().astype(np.int32)
 prods['reorders'] = priors['reordered'].groupby(priors.product_id).sum().astype(np.float32)
 prods['reorder_rate'] = (prods.reorders / prods.orders).astype(np.float32)
+prods['dow_prior_rate'] = (orders.order_dow / orders.days_since_prior_order ).astype(np.float32)
 products = products.join(prods, on='product_id')
 products.set_index('product_id', drop=False, inplace=True)
-del prods
+prods.info()
+prods.index
 
+# Little exploratory Analysis of data 
+
+# which item was ordered maximum
+prods.orders.value_counts().head(1)
+# number of items ordered
+prods.orders.value_counts().max()
+
+# Plots of different features
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.style.use('ggplot')
+
+# which product is being sold most
+ax_orders = prods['orders'][1:50].plot(kind = 'bar', figsize = (15,10))
+ax_orders.set(xlabel = 'Product Id', ylabel = 'orders')
+plt.show()
+
+# which time is busiest
+ax_order_dow = orders['order_dow'][1:50].plot(kind = 'bar', figsize = (15,10))
+ax_order_dow.set(ylabel = 'Order Day of week', xlabel = 'Index')
+plt.show()
+
+# Which day of week is busiest
+ax_order_hr_day = orders['order_hour_of_day'][1:50].plot(kind = 'bar', figsize = (15,10))
+ax_order_hr_day.set(ylabel = 'Order Hour of Day', xlabel = 'Index')
+plt.show()
+
+# X and Y plots/ relationship of order_id and different features
+
+# which order_id has maximum and minimum order hour of day 
+# Checking the distribution 
+ax_rel_orderid_hour = orders[1:50].plot(x = 'order_id', y = 'order_hour_of_day', kind = 'bar', figsize = (15,10))
+ax_rel_orderid_hour.set(ylabel = 'Order Hour of Day', xlabel = 'Order_Id')
+plt.show()
+
+# which order has more gap of days since last order
+
+ax_rel_oid_days_prior_order = orders[1:100].plot(x = 'order_id', y = 'days_since_prior_order', kind = 'bar', figsize = (15,10))
+ax_rel_oid_days_prior_order.set(ylabel = 'Day since prior order', xlabel = 'Order_Id')
+plt.show()
+
+# which order id is average active for which  hour of the day
+x = orders.groupby('order_id').mean()['order_hour_of_day']
+# what is maximum avarage order hour of day
+print('Average minimum hour of day : ',min(x))
+print('Average Maximum order hour of day : ', max(x))
+print('Order ID with average minimum hour of day :', np.argmin(x))
+print('Order ID with average maximum hour of day : ', np.argmax(x))
+
+#plot b/w order_id and average hour of day of that id
+'''
+from pylab import rcParams
+rcParams['figure.figsize'] = 15, 10
+plt.hist(x[1:10])
+plt.xlabel('Order_Id')
+plt.ylabel('Average order hour of day per order ID')
+'''
+# plot of prods dataframe
+prods_ = prods[1:1000].plot(figsize = (15,10))
+prods_.set(ylabel = 'Prods Features', xlabel = 'Index')
+plt.show()
+
+'''
+# plot of priors dataframe
+priors_ = priors[1:1000].plot(figsize = (15,10))
+priors_.set(ylabel = 'Priors Features', xlabel = 'Index')
+plt.show()
+'''
+
+#plot of products dataframe
+products_ = products[1:1000].plot(figsize = (15,10))
+products_.set(ylabel = 'Products Features', xlabel = 'Index')
+plt.show()
+
+# Which product is reordered most Pie plot
+prods['reorders'][1:10].plot.pie(autopct = '%.2f', figsize = (15,10))
 
 print('add order info to priors')
 orders.set_index('order_id', inplace=True, drop=False)
@@ -68,6 +147,8 @@ priors.drop('order_id_', inplace=True, axis=1)
 print('computing user f')
 usr = pd.DataFrame()
 usr['average_days_between_orders'] = orders.groupby('user_id')['days_since_prior_order'].mean().astype(np.float32)
+usr['average_hours_between_orders'] = orders.groupby('user_id')['order_hour_of_day'].mean().astype(np.float32)
+usr['median_orders_dow'] = orders.groupby('user_id')['order_dow'].median().astype(np.float32)
 usr['nb_orders'] = orders.groupby('user_id').size().astype(np.int16)
 
 users = pd.DataFrame()
@@ -140,6 +221,7 @@ def features(selected_orders, labels_given=False):
     del product_list
     
     print('user related features')
+    df['product_id'] = df.product_id.map(products.product_id)
     df['user_id'] = df.order_id.map(orders.user_id)
     df['user_total_orders'] = df.user_id.map(users.nb_orders)
     df['user_total_items'] = df.user_id.map(users.total_items)
@@ -162,7 +244,7 @@ def features(selected_orders, labels_given=False):
 
     print('user_X_product related features')
     df['z'] = df.user_id * 100000 + df.product_id
-    df.drop(['user_id'], axis=1, inplace=True)
+    #df.drop(['user_id'], axis=1, inplace=True)
     df['UP_orders'] = df.z.map(userXproduct.nb_orders)
     df['UP_orders_ratio'] = (df.UP_orders / df.user_total_orders).astype(np.float32)
     df['UP_last_order_id'] = df.z.map(userXproduct.last_order_id)
@@ -177,7 +259,16 @@ def features(selected_orders, labels_given=False):
     print(df.dtypes)
     print(df.memory_usage())
     return (df, labels)
-df_train, labels = features(train_orders, labels_given=True)
+
+# train and test set
+
+df_train, labels = features(train_orders[1:100], labels_given=True)
+df_test, _ = features(test_orders[1:100])  
+
+#columns for collaborative filtering 
+#columns = ['user_id','product_id']
+
+# columns for light gbm and xgboost for personalized recommendation or   
 
 f_to_use = ['user_total_orders', 'user_total_items', 'total_distinct_items',
        'user_average_days_between_orders', 'user_average_basket',
@@ -185,15 +276,15 @@ f_to_use = ['user_total_orders', 'user_total_items', 'total_distinct_items',
        'aisle_id', 'department_id', 'product_orders', 'product_reorders',
        'product_reorder_rate', 'UP_orders', 'UP_orders_ratio',
        'UP_average_pos_in_cart', 'UP_reorder_rate', 'UP_orders_since_last',
-       'UP_delta_hour_vs_last'] # 'dow', 'UP_same_dow_as_last_order'
+       'UP_delta_hour_vs_last'] 
 
+#1st Algorithm for Ranking
 
 print('formating for lgb')
 d_train = lgb.Dataset(df_train[f_to_use],
                       label=labels,
                       categorical_feature=['aisle_id', 'department_id'])  # , 'order_hour_of_day', 'dow'
 #del df_train
-
 params = {
     'task': 'train',
     'boosting_type': 'gbdt',
@@ -206,73 +297,48 @@ params = {
     'bagging_freq': 5
 }
 ROUNDS = 100
-
-print('light GBM train :-)')
+print('light GBM training')
 bst = lgb.train(params, d_train, ROUNDS)
 
-# XGBoost Classifier
+# dumping file or file serialization so that you dont have to run file again and again
 
-from xgboost import xgb
-params1 = {
-  "objective" : "binary:logistic",
-  "eval_metric" : "logloss",
-  "max_depth"    : 6,
-  "min_child_weight" : 10,
-  "gamma"     : 0.70,
-  "subsample"   : 0.77,
-  "colsample_bytree" : 0.95,
-  "alpha"  : 2e-05,
-  "lambda"  : 10
-}
-print('XGB train :D')
-d_train_ = xgb.DMatrix(df_train[f_to_use],
-                      label=labels,
-                      categorical_feature=['aisle_id', 'department_id'])
-num_round = 10
-model = xgb.train( d_train_, params = params1, num_boost_rounds =  num_round )
+pickle.dump(bst, open( "D:/save.p", "wb" ))
 
-
-importance = model.feature_importances_
-print(importance)
-# lgb.plot_importance(bst, figsize=(9,20))
-del d_train
-
-### build candidates list for test ###
-
-df_test, _ = features(test_orders)    
-
-print('light GBM predict')
+'''
+# LGB prediction
 preds = bst.predict(df_test[f_to_use])
-#print('XGBoost predict')
-#preds1 = model.predict(df_test[f_to_use])
 df_test['pred'] = preds
+'''
+# PLot of Importance of features of LGB Algorithm
+lgb.plot_importance(bst, figsize=(15,10))
+
+# Second algorithm for ranking 
+# XGBoost Regression
+
+import xgboost as xgb
+
+print('formatting xgboost')
+
+xgb1 = xgb.XGBRegressor(
+ learning_rate =0.1,
+ n_estimators=100,
+ max_depth=5,
+ min_child_weight=1,
+ gamma=0,
+ subsample=0.8,
+ colsample_bytree=0.8,
+ nthread=4,
+ scale_pos_weight=1,
+ seed=27).fit(df_train[f_to_use].values, labels)     # parameters can be tuned by gridsearch cross validation or randomsearch CV
+
+# dumping train file in pickle or object serialization so that you don't have to run code again and again.
+pickle.dump(xgb1,open("D:/save2.p","wb"))
 
 '''
-# Voting classifiers
-
-from sklearn.ensemble import VotingClassifier
-vc = VotingClassifier(estimators=[('lgb', bst), ('xgb', model)], voting='soft', weights=[2,1])
-vc= vc.fit(df_train[f_to_use])
-pred2 = vc.predict(df_test[f_to_use])
-df_test['pred'] = pred2
-
+#xgb prediction
+pred2 = xgb1.predict(df_test[f_to_use].values)
+df_test['pred1'] = pred2
 '''
-TRESHOLD = 0.22  # can be tuned with crossval on a subset of train data
-
-d = dict()
-for row in df_test.itertuples():
-    if row.pred > TRESHOLD:
-        try:
-            d[row.order_id] += ' ' + str(row.product_id)
-        except:
-            d[row.order_id] = str(row.product_id)
-
-for order in test_orders.order_id:
-    if order not in d:
-        d[order] = 'None'
-
-sub = pd.DataFrame.from_dict(d, orient='index')
-
-sub.reset_index(inplace=True)
-sub.columns = ['order_id', 'products']
-sub.to_csv('sub.csv', index=False)
+# Importance of features from xgb classifiers 
+#importance = xgb1.feature_importances_
+xgb.plot_importance(xgb1)
